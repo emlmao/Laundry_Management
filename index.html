@@ -93,9 +93,13 @@
         const [showPhoneSuggestions, setShowPhoneSuggestions] = useState(false);
         const [loading, setLoading] = useState(true);
         const [error, setError] = useState(null);
+        const [adminAuthenticated, setAdminAuthenticated] = useState(false);
+        const [passphraseInput, setPassphraseInput] = useState("");
+        const [isEditingPrices, setIsEditingPrices] = useState(false);
+        const [tempPrices, setTempPrices] = useState({});
 
-        // Machine pricing (example prices)
-        const machinePrices = {
+        // Default machine pricing (fallback values)
+        const defaultMachinePrices = {
           1: 28,
           2: 25,
           3: 22,
@@ -121,6 +125,8 @@
           23: 9,
         };
 
+        const [editablePrices, setEditablePrices] = useState(defaultMachinePrices);
+
         const employees = ["John", "Peter", "John & Liz", "Peter & Liz"];
         const statuses = [
           "Pending",
@@ -132,13 +138,14 @@
         ];
 
         // ============================================
-        // FIREBASE: Load records in real-time
+        // FIREBASE: Load records and pricing in real-time
         // ============================================
         useEffect(() => {
           const recordsRef = database.ref("laundryRecords");
+          const pricingRef = database.ref("machinePricing");
 
           // Listen for changes to the records in real-time
-          const unsubscribe = recordsRef.on(
+          const recordsUnsubscribe = recordsRef.on(
             "value",
             (snapshot) => {
               try {
@@ -170,20 +177,49 @@
             }
           );
 
-          // Cleanup listener when component unmounts
-          return () => recordsRef.off("value", unsubscribe);
+          // Listen for changes to machine pricing
+          const pricingUnsubscribe = pricingRef.on(
+            "value",
+            (snapshot) => {
+              try {
+                const pricingData = snapshot.val();
+                if (pricingData) {
+                  setEditablePrices(pricingData);
+                } else {
+                  // If no pricing data exists in Firebase, initialize it with default prices
+                  database.ref("machinePricing").set(defaultMachinePrices);
+                  setEditablePrices(defaultMachinePrices);
+                }
+              } catch (err) {
+                console.error("Error loading pricing:", err);
+                // Fall back to default prices if there's an error
+                setEditablePrices(defaultMachinePrices);
+              }
+            },
+            (err) => {
+              console.error("Firebase pricing error:", err);
+              // Fall back to default prices if there's an error
+              setEditablePrices(defaultMachinePrices);
+            }
+          );
+
+          // Cleanup listeners when component unmounts
+          return () => {
+            recordsRef.off("value", recordsUnsubscribe);
+            pricingRef.off("value", pricingUnsubscribe);
+          };
         }, []);
 
         // Calculate total price when washers change
         useEffect(() => {
           const totalPrice = currentEntry.washersUsed.reduce(
             (total, washer) => {
-              return total + (machinePrices[washer] || 0);
+              return total + (editablePrices[washer] || 0);
             },
             0
           );
           setCurrentEntry((prev) => ({ ...prev, price: totalPrice }));
-        }, [currentEntry.washersUsed]);
+        }, [currentEntry.washersUsed, editablePrices]);
 
         const handleWasherToggle = (washerNumber) => {
           setCurrentEntry((prev) => ({
@@ -454,6 +490,74 @@
         };
 
         // ============================================
+        // ADMIN FUNCTIONS
+        // ============================================
+        const handlePassphraseSubmit = () => {
+          if (passphraseInput === "helloworld123") {
+            setAdminAuthenticated(true);
+            setPassphraseInput("");
+          } else {
+            alert("Incorrect passphrase. Please try again.");
+            setPassphraseInput("");
+          }
+        };
+
+        const handlePassphraseKeyPress = (e) => {
+          if (e.key === "Enter") {
+            handlePassphraseSubmit();
+          }
+        };
+
+        const startEditingPrices = () => {
+          setTempPrices({ ...editablePrices });
+          setIsEditingPrices(true);
+        };
+
+        const cancelEditingPrices = () => {
+          setTempPrices({});
+          setIsEditingPrices(false);
+        };
+
+        const savePriceChanges = async () => {
+          // Validate all prices are positive numbers
+          const invalidPrices = Object.entries(tempPrices).filter(
+            ([, price]) => isNaN(price) || parseFloat(price) < 0
+          );
+
+          if (invalidPrices.length > 0) {
+            alert("Please enter valid positive numbers for all prices.");
+            return;
+          }
+
+          try {
+            // Convert string values to numbers
+            const numericPrices = {};
+            Object.entries(tempPrices).forEach(([washer, price]) => {
+              numericPrices[washer] = parseFloat(price);
+            });
+
+            // Save to Firebase
+            await database.ref("machinePricing").set(numericPrices);
+
+            // Update local state (Firebase listener will also update this)
+            setEditablePrices(numericPrices);
+            setTempPrices({});
+            setIsEditingPrices(false);
+            alert("Prices updated successfully and saved to database!");
+          } catch (err) {
+            console.error("Error saving prices:", err);
+            alert("Failed to save prices. Please try again.");
+          }
+        };
+
+        const handlePriceChange = (washerNumber, newPrice) => {
+          setTempPrices((prev) => ({
+            ...prev,
+            [washerNumber]: newPrice,
+          }));
+        };
+
+        // ============================================
         // LOADING & ERROR STATES
         // ============================================
         if (loading) {
@@ -499,23 +603,33 @@
               <div className="flex mb-6 bg-white rounded-lg shadow-sm">
                 <button
                   onClick={() => setActiveTab("entry")}
-                  className={`flex-1 py-3 px-6 text-center font-medium rounded-l-lg transition-colors ${
+                  className={`flex-1 py-3 px-6 text-center font-medium transition-colors ${
                     activeTab === "entry"
                       ? "bg-blue-500 text-white"
                       : "bg-gray-50 text-gray-600 hover:bg-gray-100"
-                  }`}
+                  } ${activeTab === "admin" ? "" : "rounded-l-lg"}`}
                 >
                   {editingId ? "Edit Entry" : "New Entry"}
                 </button>
                 <button
                   onClick={() => setActiveTab("records")}
-                  className={`flex-1 py-3 px-6 text-center font-medium rounded-r-lg transition-colors ${
+                  className={`flex-1 py-3 px-6 text-center font-medium transition-colors ${
                     activeTab === "records"
                       ? "bg-blue-500 text-white"
                       : "bg-gray-50 text-gray-600 hover:bg-gray-100"
                   }`}
                 >
                   Records & History
+                </button>
+                <button
+                  onClick={() => setActiveTab("admin")}
+                  className={`flex-1 py-3 px-6 text-center font-medium rounded-r-lg transition-colors ${
+                    activeTab === "admin"
+                      ? "bg-blue-500 text-white"
+                      : "bg-gray-50 text-gray-600 hover:bg-gray-100"
+                  }`}
+                >
+                  Admin
                 </button>
               </div>
 
@@ -693,7 +807,7 @@
                       <br />
                       Individual prices:{" "}
                       {currentEntry.washersUsed
-                        .map((w) => `#${w} = $${machinePrices[w]}`)
+                        .map((w) => `#${w} = $${editablePrices[w]}`)
                         .join(", ")}
                     </div>
                   </div>
@@ -1042,6 +1156,112 @@
                   <div className="mt-4 text-sm text-gray-600">
                     Total records: {filteredRecords.length}
                   </div>
+                </div>
+              )}
+
+              {activeTab === "admin" && (
+                <div className="bg-white rounded-lg shadow-lg p-6">
+                  <h2 className="text-xl font-semibold mb-6">Admin Panel</h2>
+
+                  {!adminAuthenticated ? (
+                    <div className="max-w-md mx-auto">
+                      <div className="bg-yellow-50 border-2 border-yellow-200 rounded-lg p-6">
+                        <h3 className="text-lg font-medium text-yellow-800 mb-4">
+                          🔒 Authentication Required
+                        </h3>
+                        <p className="text-yellow-700 mb-4">
+                          Please enter the admin passphrase to access this section.
+                        </p>
+                        <div className="space-y-4">
+                          <input
+                            type="password"
+                            value={passphraseInput}
+                            onChange={(e) => setPassphraseInput(e.target.value)}
+                            onKeyPress={handlePassphraseKeyPress}
+                            placeholder="Enter passphrase"
+                            className="w-full p-3 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                          />
+                          <button
+                            onClick={handlePassphraseSubmit}
+                            className="w-full bg-blue-500 hover:bg-blue-600 text-white py-3 px-4 rounded-md font-medium transition-colors"
+                          >
+                            Access Admin Panel
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div>
+                      <div className="flex justify-between items-center mb-6">
+                        <h3 className="text-lg font-medium text-gray-800">
+                          Washer Pricing Configuration
+                        </h3>
+                        <div className="flex gap-2">
+                          {!isEditingPrices ? (
+                            <button
+                              onClick={startEditingPrices}
+                              className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-md font-medium transition-colors"
+                            >
+                              Edit Prices
+                            </button>
+                          ) : (
+                            <>
+                              <button
+                                onClick={savePriceChanges}
+                                className="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-md font-medium transition-colors"
+                              >
+                                Save Changes
+                              </button>
+                              <button
+                                onClick={cancelEditingPrices}
+                                className="bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded-md font-medium transition-colors"
+                              >
+                                Cancel
+                              </button>
+                            </>
+                          )}
+                          <button
+                            onClick={() => setAdminAuthenticated(false)}
+                            className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-md font-medium transition-colors"
+                          >
+                            Logout
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                        {Object.entries(editablePrices).map(([washerNumber, price]) => (
+                          <div
+                            key={washerNumber}
+                            className="bg-gray-50 border border-gray-200 rounded-lg p-4"
+                          >
+                            <div className="text-center">
+                              <h4 className="text-lg font-semibold text-gray-800 mb-2">
+                                Washer #{washerNumber}
+                              </h4>
+                              {isEditingPrices ? (
+                                <div className="flex items-center justify-center">
+                                  <span className="text-lg font-bold text-blue-600 mr-1">$</span>
+                                  <input
+                                    type="number"
+                                    step="0.01"
+                                    min="0"
+                                    value={tempPrices[washerNumber] !== undefined ? tempPrices[washerNumber] : price}
+                                    onChange={(e) => handlePriceChange(washerNumber, e.target.value)}
+                                    className="w-20 text-center text-lg font-bold text-blue-600 border border-gray-300 rounded px-2 py-1 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                  />
+                                </div>
+                              ) : (
+                                <div className="text-2xl font-bold text-blue-600">
+                                  ${price}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
