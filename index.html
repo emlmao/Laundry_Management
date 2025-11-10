@@ -1,0 +1,1058 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Laundry Management System</title>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
+    <style>
+      /* Override WordPress styles without breaking formatting */
+      #root input,
+      #root textarea,
+      #root button,
+      #root select {
+        font-size: 14px !important;
+        line-height: 1.5 !important;
+      }
+      #root input::placeholder,
+      #root textarea::placeholder {
+        font-size: 14px !important;
+        opacity: 0.5 !important;
+      }
+      /* Fix table styling */
+      #root table,
+      #root th,
+      #root td {
+        font-size: 14px !important;
+        padding: 0.5rem !important;
+      }
+      #root th {
+        font-weight: 500 !important;
+        text-align: left !important;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+      // ============================================
+      // FIREBASE CONFIGURATION
+      // ============================================
+      // Your web app's Firebase configuration
+      const firebaseConfig = {
+        apiKey: "AIzaSyBgwxL77VSPbbAUQjkN03zcr7XJH2QJplE",
+        authDomain: "laundry-management-4c40c.firebaseapp.com",
+        databaseURL:
+          "https://laundry-management-4c40c-default-rtdb.firebaseio.com",
+        projectId: "laundry-management-4c40c",
+        storageBucket: "laundry-management-4c40c.firebasestorage.app",
+        messagingSenderId: "335945702733",
+        appId: "1:335945702733:web:326321902c7c1519612b04",
+        measurementId: "G-18PG7G0JLC",
+      };
+
+      // Initialize Firebase
+      if (!firebase.apps.length) {
+        firebase.initializeApp(firebaseConfig);
+      }
+      const database = firebase.database();
+
+      const { useState, useEffect } = React;
+
+      const LaundryManagementApp = () => {
+        // State for current entry
+        const [currentEntry, setCurrentEntry] = useState({
+          employee: "",
+          name: "",
+          telephone: "",
+          weight: "",
+          comments: "",
+          washersUsed: [],
+          dryersUsed: [],
+          price: 0,
+          paid: "",
+          tip: "",
+          status: "Pending",
+        });
+
+        // State for all laundry records
+        const [laundryRecords, setLaundryRecords] = useState([]);
+        const [searchTerm, setSearchTerm] = useState("");
+        const [activeTab, setActiveTab] = useState("entry");
+        const [editingId, setEditingId] = useState(null);
+        const [statusFilter, setStatusFilter] = useState("all");
+        const [showNameSuggestions, setShowNameSuggestions] = useState(false);
+        const [showPhoneSuggestions, setShowPhoneSuggestions] = useState(false);
+        const [loading, setLoading] = useState(true);
+        const [error, setError] = useState(null);
+
+        // Machine pricing (example prices)
+        const machinePrices = {
+          1: 28,
+          2: 25,
+          3: 22,
+          4: 20,
+          5: 18,
+          6: 15,
+          7: 12,
+          8: 10,
+          9: 8,
+          10: 6,
+          11: 5,
+          12: 4,
+          13: 3,
+          14: 2,
+          15: 1,
+          16: 15,
+          17: 18,
+          18: 20,
+          19: 22,
+          20: 25,
+          21: 28,
+          22: 11,
+          23: 9,
+        };
+
+        const employees = ["John", "Peter", "John & Liz", "Peter & Liz"];
+        const statuses = [
+          "Pending",
+          "Washing",
+          "Drying",
+          "Folding",
+          "Done",
+          "Picked Up",
+        ];
+
+        // ============================================
+        // FIREBASE: Load records in real-time
+        // ============================================
+        useEffect(() => {
+          const recordsRef = database.ref("laundryRecords");
+
+          // Listen for changes to the records in real-time
+          const unsubscribe = recordsRef.on(
+            "value",
+            (snapshot) => {
+              try {
+                const data = snapshot.val();
+                if (data) {
+                  // Convert Firebase object to array
+                  const recordsArray = Object.keys(data).map((key) => ({
+                    id: key,
+                    ...data[key],
+                  }));
+                  setLaundryRecords(recordsArray);
+                } else {
+                  setLaundryRecords([]);
+                }
+                setLoading(false);
+                setError(null);
+              } catch (err) {
+                console.error("Error loading records:", err);
+                setError("Failed to load records. Please refresh the page.");
+                setLoading(false);
+              }
+            },
+            (err) => {
+              console.error("Firebase error:", err);
+              setError(
+                "Database connection error. Please check your Firebase configuration."
+              );
+              setLoading(false);
+            }
+          );
+
+          // Cleanup listener when component unmounts
+          return () => recordsRef.off("value", unsubscribe);
+        }, []);
+
+        // Calculate total price when washers change
+        useEffect(() => {
+          const totalPrice = currentEntry.washersUsed.reduce(
+            (total, washer) => {
+              return total + (machinePrices[washer] || 0);
+            },
+            0
+          );
+          setCurrentEntry((prev) => ({ ...prev, price: totalPrice }));
+        }, [currentEntry.washersUsed]);
+
+        const handleWasherToggle = (washerNumber) => {
+          setCurrentEntry((prev) => ({
+            ...prev,
+            washersUsed: prev.washersUsed.includes(washerNumber)
+              ? prev.washersUsed.filter((w) => w !== washerNumber)
+              : [...prev.washersUsed, washerNumber],
+          }));
+        };
+
+        const handleDryerToggle = (dryerNumber) => {
+          setCurrentEntry((prev) => ({
+            ...prev,
+            dryersUsed: prev.dryersUsed.includes(dryerNumber)
+              ? prev.dryersUsed.filter((d) => d !== dryerNumber)
+              : [...prev.dryersUsed, dryerNumber],
+          }));
+        };
+
+        // ============================================
+        // FIREBASE: Save new or updated record
+        // ============================================
+        const handleSubmit = async () => {
+          if (!currentEntry.name || !currentEntry.employee) {
+            alert("Please fill in all required fields");
+            return;
+          }
+
+          try {
+            const recordData = {
+              ...currentEntry,
+              dateTime: editingId
+                ? laundryRecords.find((r) => r.id === editingId)?.dateTime
+                : new Date().toLocaleString(),
+              pickup: currentEntry.status === "Picked Up",
+            };
+
+            if (editingId) {
+              // Update existing record in Firebase
+              await database.ref(`laundryRecords/${editingId}`).set(recordData);
+              alert("Record updated successfully!");
+              setEditingId(null);
+            } else {
+              // Create new record in Firebase
+              const newRecordRef = database.ref("laundryRecords").push();
+              await newRecordRef.set(recordData);
+              alert("Entry saved successfully!");
+            }
+
+            // Send SMS notification if status is "Done"
+            // Note: This is a placeholder - will be replaced with actual Twilio integration
+            if (currentEntry.status === "Done" && currentEntry.telephone) {
+              sendSMSNotification(currentEntry.telephone, currentEntry.name);
+            }
+
+            // Reset form
+            setCurrentEntry({
+              employee: "",
+              name: "",
+              telephone: "",
+              weight: "",
+              comments: "",
+              washersUsed: [],
+              dryersUsed: [],
+              price: 0,
+              paid: "",
+              tip: "",
+              status: "Pending",
+            });
+          } catch (err) {
+            console.error("Error saving record:", err);
+            alert("Failed to save record. Please try again.");
+          }
+        };
+
+        const sendSMSNotification = (phone, name) => {
+          // In a real application, this would connect to an SMS service like Twilio
+          alert(
+            `SMS sent to ${phone}: "Hello ${name}, your laundry is ready for pickup!"`
+          );
+        };
+
+        const handleEdit = (record) => {
+          // Ensure arrays exist for washersUsed and dryersUsed
+          setCurrentEntry({
+            ...record,
+            washersUsed: record.washersUsed || [],
+            dryersUsed: record.dryersUsed || [],
+            weight: record.weight || "",
+            comments: record.comments || "",
+            paid: record.paid || "",
+            tip: record.tip || "",
+          });
+          setEditingId(record.id);
+          setActiveTab("entry");
+        };
+
+        // ============================================
+        // FIREBASE: Delete record
+        // ============================================
+        const handleDelete = async (id) => {
+          if (confirm("Are you sure you want to delete this record?")) {
+            try {
+              await database.ref(`laundryRecords/${id}`).remove();
+              alert("Record deleted successfully!");
+            } catch (err) {
+              console.error("Error deleting record:", err);
+              alert("Failed to delete record. Please try again.");
+            }
+          }
+        };
+
+        // Get unique customers based on name AND phone number combination
+        const getUniqueCustomers = () => {
+          const customerMap = new Map();
+          laundryRecords.forEach((record) => {
+            if (record.name) {
+              const key = `${record.name.toLowerCase()}_${
+                record.telephone || ""
+              }`;
+              if (!customerMap.has(key)) {
+                customerMap.set(key, {
+                  name: record.name,
+                  telephone: record.telephone,
+                });
+              }
+            }
+          });
+          return Array.from(customerMap.values());
+        };
+
+        // Filter customer suggestions based on name input
+        const getCustomerSuggestions = () => {
+          if (!currentEntry.name || currentEntry.name.length === 0) return [];
+          const uniqueCustomers = getUniqueCustomers();
+          return uniqueCustomers.filter((customer) =>
+            customer.name
+              .toLowerCase()
+              .includes(currentEntry.name.toLowerCase())
+          );
+        };
+
+        // Filter customer suggestions based on phone input
+        const getPhoneSuggestions = () => {
+          if (!currentEntry.telephone || currentEntry.telephone.length === 0)
+            return [];
+          const uniqueCustomers = getUniqueCustomers();
+          return uniqueCustomers.filter(
+            (customer) =>
+              customer.telephone &&
+              customer.telephone.includes(currentEntry.telephone)
+          );
+        };
+
+        const handleNameChange = (e) => {
+          setCurrentEntry((prev) => ({ ...prev, name: e.target.value }));
+          setShowNameSuggestions(true);
+        };
+
+        const handlePhoneChange = (e) => {
+          setCurrentEntry((prev) => ({ ...prev, telephone: e.target.value }));
+          setShowPhoneSuggestions(true);
+        };
+
+        const handleNameSelect = (customer) => {
+          setCurrentEntry((prev) => ({
+            ...prev,
+            name: customer.name,
+            telephone: customer.telephone || "",
+          }));
+          setShowNameSuggestions(false);
+        };
+
+        const handlePhoneSelect = (customer) => {
+          setCurrentEntry((prev) => ({
+            ...prev,
+            name: customer.name,
+            telephone: customer.telephone || "",
+          }));
+          setShowPhoneSuggestions(false);
+        };
+
+        const formatWashers = (washers) => {
+          return washers.sort((a, b) => a - b).join(", ");
+        };
+
+        const formatMachines = (washers, dryers) => {
+          const washerStr = washers
+            .sort((a, b) => a - b)
+            .map((w) => `W${w}`)
+            .join(", ");
+          const dryerStr = dryers
+            .sort((a, b) => a - b)
+            .map((d) => `D${d}`)
+            .join(", ");
+          const parts = [washerStr, dryerStr].filter((s) => s.length > 0);
+          return parts.join(", ") || "None";
+        };
+
+        const filteredRecords = laundryRecords
+          .filter((record) => {
+            // Search filter
+            const machineString = formatMachines(
+              record.washersUsed || [],
+              record.dryersUsed || []
+            ).toLowerCase();
+            const matchesSearch =
+              searchTerm === "" ||
+              record.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+              record.telephone.includes(searchTerm) ||
+              record.status.toLowerCase().includes(searchTerm.toLowerCase()) ||
+              machineString.includes(searchTerm.toLowerCase());
+
+            // Status filter
+            const matchesStatus =
+              statusFilter === "all" || record.status === statusFilter;
+
+            return matchesSearch && matchesStatus;
+          })
+          .sort((a, b) => {
+            // Sort by ID (timestamp) in descending order - most recent first
+            return b.id.localeCompare(a.id);
+          });
+
+        const downloadCSV = () => {
+          const headers = [
+            "Date & Time",
+            "Employee",
+            "Name",
+            "Telephone",
+            "Weight",
+            "Comments",
+            "Machines",
+            "Price",
+            "Paid",
+            "Tip",
+            "Status",
+            "Pickup",
+          ];
+          const csvData = filteredRecords.map((record) => [
+            record.dateTime,
+            record.employee,
+            record.name,
+            record.telephone,
+            record.weight || "",
+            record.comments || "",
+            formatMachines(record.washersUsed || [], record.dryersUsed || []),
+            `$${record.price}`,
+            `$${record.paid || 0}`,
+            `$${record.tip || 0}`,
+            record.status,
+            record.pickup ? "Yes" : "No",
+          ]);
+
+          const csvContent = [headers, ...csvData]
+            .map((row) => row.map((field) => `"${field}"`).join(","))
+            .join("\n");
+
+          const blob = new Blob([csvContent], { type: "text/csv" });
+          const url = window.URL.createObjectURL(blob);
+          const link = document.createElement("a");
+          link.href = url;
+          link.download = `laundry-records-${
+            new Date().toISOString().split("T")[0]
+          }.csv`;
+          link.click();
+          window.URL.revokeObjectURL(url);
+        };
+
+        // ============================================
+        // LOADING & ERROR STATES
+        // ============================================
+        if (loading) {
+          return (
+            <div className="min-h-screen bg-gray-100 p-4 flex items-center justify-center">
+              <div className="text-center">
+                <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-blue-500 mx-auto mb-4"></div>
+                <p className="text-gray-600 text-lg">
+                  Loading laundry records...
+                </p>
+              </div>
+            </div>
+          );
+        }
+
+        if (error) {
+          return (
+            <div className="min-h-screen bg-gray-100 p-4 flex items-center justify-center">
+              <div className="bg-red-50 border-2 border-red-500 rounded-lg p-8 max-w-md">
+                <h2 className="text-2xl font-bold text-red-800 mb-4">
+                  Connection Error
+                </h2>
+                <p className="text-red-700 mb-4">{error}</p>
+                <button
+                  onClick={() => window.location.reload()}
+                  className="bg-red-500 hover:bg-red-600 text-white px-6 py-2 rounded-md font-medium transition-colors"
+                >
+                  Reload Page
+                </button>
+              </div>
+            </div>
+          );
+        }
+
+        return (
+          <div className="min-h-screen bg-gray-100 p-4">
+            <div className="max-w-6xl mx-auto">
+              <h1 className="text-3xl font-bold text-center mb-6 text-gray-800">
+                Laundry Management System
+              </h1>
+
+              {/* Tab Navigation */}
+              <div className="flex mb-6 bg-white rounded-lg shadow-sm">
+                <button
+                  onClick={() => setActiveTab("entry")}
+                  className={`flex-1 py-3 px-6 text-center font-medium rounded-l-lg transition-colors ${
+                    activeTab === "entry"
+                      ? "bg-blue-500 text-white"
+                      : "bg-gray-50 text-gray-600 hover:bg-gray-100"
+                  }`}
+                >
+                  {editingId ? "Edit Entry" : "New Entry"}
+                </button>
+                <button
+                  onClick={() => setActiveTab("records")}
+                  className={`flex-1 py-3 px-6 text-center font-medium rounded-r-lg transition-colors ${
+                    activeTab === "records"
+                      ? "bg-blue-500 text-white"
+                      : "bg-gray-50 text-gray-600 hover:bg-gray-100"
+                  }`}
+                >
+                  Records & History
+                </button>
+              </div>
+
+              {activeTab === "entry" && (
+                <div className="bg-white rounded-lg shadow-lg p-6">
+                  <h2 className="text-xl font-semibold mb-4">
+                    {editingId ? "Edit Laundry Entry" : "New Laundry Entry"}
+                  </h2>
+
+                  {/* Employee Selection */}
+                  <div className="mb-6">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Employee (Can only select one option)
+                    </label>
+                    <div className="flex gap-4 flex-wrap">
+                      {employees.map((employee) => (
+                        <label key={employee} className="flex items-center">
+                          <input
+                            type="radio"
+                            name="employee"
+                            value={employee}
+                            checked={currentEntry.employee === employee}
+                            onChange={(e) =>
+                              setCurrentEntry((prev) => ({
+                                ...prev,
+                                employee: e.target.value,
+                              }))
+                            }
+                            className="mr-2"
+                          />
+                          <span className="text-sm">{employee}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Customer Info */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                    <div className="relative">
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Name
+                      </label>
+                      <input
+                        type="text"
+                        value={currentEntry.name}
+                        onChange={handleNameChange}
+                        onFocus={() => setShowNameSuggestions(true)}
+                        onBlur={() =>
+                          setTimeout(() => setShowNameSuggestions(false), 200)
+                        }
+                        className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        placeholder="Customer name"
+                      />
+                      {showNameSuggestions &&
+                        getCustomerSuggestions().length > 0 && (
+                          <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-md shadow-lg max-h-48 overflow-y-auto">
+                            {getCustomerSuggestions().map((customer, index) => (
+                              <div
+                                key={index}
+                                onClick={() => handleNameSelect(customer)}
+                                className="p-2 hover:bg-blue-100 cursor-pointer text-sm"
+                              >
+                                <div className="font-medium">
+                                  {customer.name}
+                                </div>
+                                {customer.telephone && (
+                                  <div className="text-gray-600 text-xs">
+                                    {customer.telephone}
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                    </div>
+                    <div className="relative">
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Telephone (optional)
+                      </label>
+                      <input
+                        type="tel"
+                        value={currentEntry.telephone}
+                        onChange={handlePhoneChange}
+                        onFocus={() => setShowPhoneSuggestions(true)}
+                        onBlur={() =>
+                          setTimeout(() => setShowPhoneSuggestions(false), 200)
+                        }
+                        className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        placeholder="Phone number"
+                      />
+                      {showPhoneSuggestions &&
+                        getPhoneSuggestions().length > 0 && (
+                          <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-md shadow-lg max-h-48 overflow-y-auto">
+                            {getPhoneSuggestions().map((customer, index) => (
+                              <div
+                                key={index}
+                                onClick={() => handlePhoneSelect(customer)}
+                                className="p-2 hover:bg-blue-100 cursor-pointer text-sm"
+                              >
+                                <div className="font-medium">
+                                  {customer.telephone}
+                                </div>
+                                <div className="text-gray-600 text-xs">
+                                  {customer.name}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Weight (lbs) (optional)
+                      </label>
+                      <input
+                        type="number"
+                        value={currentEntry.weight}
+                        onChange={(e) =>
+                          setCurrentEntry((prev) => ({
+                            ...prev,
+                            weight: e.target.value,
+                          }))
+                        }
+                        className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        placeholder="Weight in pounds"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Comments */}
+                  <div className="mb-6">
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Comments (optional)
+                    </label>
+                    <textarea
+                      value={currentEntry.comments}
+                      onChange={(e) =>
+                        setCurrentEntry((prev) => ({
+                          ...prev,
+                          comments: e.target.value,
+                        }))
+                      }
+                      className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      placeholder="Additional notes or special instructions"
+                      rows="3"
+                    />
+                  </div>
+
+                  {/* Washers Used */}
+                  <div className="mb-6">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Washers Used (Multiple selection. Each option has price)
+                    </label>
+                    <div className="flex flex-wrap gap-1 mb-2">
+                      {Array.from({ length: 23 }, (_, i) => i + 1).map(
+                        (washer) => (
+                          <button
+                            key={washer}
+                            type="button"
+                            onClick={() => handleWasherToggle(washer)}
+                            className={`h-8 w-10 rounded border text-xs font-medium transition-colors ${
+                              currentEntry.washersUsed.includes(washer)
+                                ? "bg-blue-500 text-white border-blue-500"
+                                : "bg-white text-gray-700 border-gray-300 hover:border-gray-400"
+                            }`}
+                          >
+                            W{washer}
+                          </button>
+                        )
+                      )}
+                    </div>
+                    <div className="text-sm text-gray-600">
+                      Selected washers:{" "}
+                      {formatWashers(currentEntry.washersUsed) || "None"}
+                      <br />
+                      Individual prices:{" "}
+                      {currentEntry.washersUsed
+                        .map((w) => `#${w} = $${machinePrices[w]}`)
+                        .join(", ")}
+                    </div>
+                  </div>
+
+                  {/* Dryers Used */}
+                  <div className="mb-6">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Dryers Used (Multiple selection. No price)
+                    </label>
+                    <div className="flex flex-wrap gap-1 mb-2">
+                      {Array.from({ length: 28 }, (_, i) => i + 1).map(
+                        (dryer) => (
+                          <button
+                            key={dryer}
+                            type="button"
+                            onClick={() => handleDryerToggle(dryer)}
+                            className={`h-8 w-10 rounded border text-xs font-medium transition-colors ${
+                              currentEntry.dryersUsed.includes(dryer)
+                                ? "bg-green-500 text-white border-green-500"
+                                : "bg-white text-gray-700 border-gray-300 hover:border-gray-400"
+                            }`}
+                          >
+                            D{dryer}
+                          </button>
+                        )
+                      )}
+                    </div>
+                    <div className="text-sm text-gray-600">
+                      Selected dryers:{" "}
+                      {formatWashers(currentEntry.dryersUsed) || "None"}
+                    </div>
+                  </div>
+
+                  {/* Price, Paid, Tip */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Price
+                      </label>
+                      <input
+                        type="number"
+                        value={currentEntry.price}
+                        readOnly
+                        className="w-full p-2 border border-gray-300 rounded-md bg-gray-50"
+                        placeholder="Auto-calculated"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Paid
+                      </label>
+                      <input
+                        type="number"
+                        value={currentEntry.paid}
+                        onChange={(e) =>
+                          setCurrentEntry((prev) => ({
+                            ...prev,
+                            paid: e.target.value,
+                          }))
+                        }
+                        className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        placeholder="Amount paid"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Tip
+                      </label>
+                      <input
+                        type="number"
+                        value={currentEntry.tip}
+                        onChange={(e) =>
+                          setCurrentEntry((prev) => ({
+                            ...prev,
+                            tip: e.target.value,
+                          }))
+                        }
+                        className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        placeholder="Tip amount"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Status */}
+                  <div className="mb-6">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Status
+                    </label>
+                    <div className="flex gap-4 flex-wrap">
+                      {statuses.map((status) => (
+                        <label key={status} className="flex items-center">
+                          <input
+                            type="radio"
+                            name="status"
+                            value={status}
+                            checked={currentEntry.status === status}
+                            onChange={(e) =>
+                              setCurrentEntry((prev) => ({
+                                ...prev,
+                                status: e.target.value,
+                              }))
+                            }
+                            className="mr-2"
+                          />
+                          <span className="text-sm">{status}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Submit Button */}
+                  <div className="flex gap-4">
+                    <button
+                      onClick={handleSubmit}
+                      className="bg-blue-500 hover:bg-blue-600 text-white px-6 py-2 rounded-md font-medium transition-colors"
+                    >
+                      {editingId ? "Update Entry" : "Save Entry"}
+                    </button>
+                    {editingId && (
+                      <button
+                        onClick={() => {
+                          setEditingId(null);
+                          setCurrentEntry({
+                            employee: "",
+                            name: "",
+                            telephone: "",
+                            weight: "",
+                            comments: "",
+                            washersUsed: [],
+                            dryersUsed: [],
+                            price: 0,
+                            paid: "",
+                            tip: "",
+                            status: "Pending",
+                          });
+                        }}
+                        className="bg-gray-500 hover:bg-gray-600 text-white px-6 py-2 rounded-md font-medium transition-colors"
+                      >
+                        Cancel Edit
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {activeTab === "records" && (
+                <div className="bg-white rounded-lg shadow-lg p-6">
+                  <div className="mb-6">
+                    <h2 className="text-xl font-semibold mb-4">
+                      Laundry Records & History
+                    </h2>
+
+                    {/* Search Bar */}
+                    <div className="mb-4">
+                      <div className="flex items-center gap-2">
+                        <span className="text-gray-400">🔍</span>
+                        <input
+                          type="text"
+                          placeholder="Search by name, phone, status, or machine (W1, D5, etc.)..."
+                          value={searchTerm}
+                          onChange={(e) => setSearchTerm(e.target.value)}
+                          className="flex-1 p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Filters and Download */}
+                    <div className="flex flex-wrap gap-4 items-center justify-between">
+                      {/* Status Filter */}
+                      <div className="flex items-center gap-2">
+                        <label className="text-sm font-medium text-gray-700">
+                          Status:
+                        </label>
+                        <select
+                          value={statusFilter}
+                          onChange={(e) => setStatusFilter(e.target.value)}
+                          className="p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        >
+                          <option value="all">All Statuses</option>
+                          {statuses.map((status) => (
+                            <option key={status} value={status}>
+                              {status}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* Download Button */}
+                      <button
+                        onClick={downloadCSV}
+                        className="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-md font-medium transition-colors flex items-center gap-2"
+                      >
+                        📥 Download CSV
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <table className="w-full border-collapse border border-gray-300">
+                      <thead>
+                        <tr className="bg-gray-800 text-white">
+                          <th className="border border-gray-300 p-2 text-left">
+                            Date & Time
+                          </th>
+                          <th className="border border-gray-300 p-2 text-left">
+                            Employee
+                          </th>
+                          <th className="border border-gray-300 p-2 text-left">
+                            Name
+                          </th>
+                          <th className="border border-gray-300 p-2 text-left">
+                            Telephone
+                          </th>
+                          <th className="border border-gray-300 p-2 text-left">
+                            Weight (lbs)
+                          </th>
+                          <th className="border border-gray-300 p-2 text-left">
+                            Comments
+                          </th>
+                          <th className="border border-gray-300 p-2 text-left">
+                            Machine
+                          </th>
+                          <th className="border border-gray-300 p-2 text-left">
+                            Price
+                          </th>
+                          <th className="border border-gray-300 p-2 text-left">
+                            Paid
+                          </th>
+                          <th className="border border-gray-300 p-2 text-left">
+                            Tip
+                          </th>
+                          <th className="border border-gray-300 p-2 text-left">
+                            Status
+                          </th>
+                          <th className="border border-gray-300 p-2 text-left">
+                            Pickup?
+                          </th>
+                          <th className="border border-gray-300 p-2 text-left">
+                            Actions
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredRecords.map((record, index) => (
+                          <tr
+                            key={record.id}
+                            className={
+                              index % 2 === 0 ? "bg-gray-50" : "bg-white"
+                            }
+                          >
+                            <td className="border border-gray-300 p-2 text-sm">
+                              {record.dateTime}
+                            </td>
+                            <td className="border border-gray-300 p-2">
+                              {record.employee}
+                            </td>
+                            <td className="border border-gray-300 p-2">
+                              {record.name}
+                            </td>
+                            <td className="border border-gray-300 p-2">
+                              {record.telephone}
+                            </td>
+                            <td className="border border-gray-300 p-2">
+                              {record.weight || ""}
+                            </td>
+                            <td className="border border-gray-300 p-2 text-sm">
+                              {record.comments || ""}
+                            </td>
+                            <td className="border border-gray-300 p-2 text-sm">
+                              {formatMachines(
+                                record.washersUsed || [],
+                                record.dryersUsed || []
+                              )}
+                            </td>
+                            <td className="border border-gray-300 p-2">
+                              ${record.price}
+                            </td>
+                            <td className="border border-gray-300 p-2">
+                              ${record.paid || 0}
+                            </td>
+                            <td className="border border-gray-300 p-2">
+                              ${record.tip || 0}
+                            </td>
+                            <td className="border border-gray-300 p-2">
+                              <span
+                                className={`px-2 py-1 rounded-full text-xs font-medium ${
+                                  record.status === "Done"
+                                    ? "bg-green-100 text-green-800"
+                                    : record.status === "Picked Up"
+                                    ? "bg-green-100 text-green-800"
+                                    : "bg-yellow-100 text-yellow-800"
+                                }`}
+                              >
+                                {record.status}
+                              </span>
+                            </td>
+                            <td className="border border-gray-300 p-2 text-center">
+                              {record.pickup ? "✓" : "✗"}
+                            </td>
+                            <td className="border border-gray-300 p-2">
+                              <div className="flex gap-1">
+                                <button
+                                  onClick={() => handleEdit(record)}
+                                  className="p-1 text-blue-600 hover:bg-blue-100 rounded"
+                                  title="Edit"
+                                >
+                                  ✏️
+                                </button>
+                                <button
+                                  onClick={() => handleDelete(record.id)}
+                                  className="p-1 text-red-600 hover:bg-red-100 rounded"
+                                  title="Delete"
+                                >
+                                  🗑️
+                                </button>
+                                {record.status === "Done" && (
+                                  <button
+                                    onClick={() =>
+                                      sendSMSNotification(
+                                        record.telephone,
+                                        record.name
+                                      )
+                                    }
+                                    className="p-1 text-green-600 hover:bg-green-100 rounded"
+                                    title="Send SMS"
+                                  >
+                                    📱
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+
+                    {filteredRecords.length === 0 && (
+                      <div className="text-center py-8 text-gray-500">
+                        {searchTerm
+                          ? "No records found matching your search."
+                          : "No laundry records yet."}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="mt-4 text-sm text-gray-600">
+                    Total records: {filteredRecords.length}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      };
+
+      ReactDOM.render(
+        <LaundryManagementApp />,
+        document.getElementById("root")
+      );
+    </script>
+  </body>
+</html>
