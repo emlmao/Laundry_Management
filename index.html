@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Laundry Management System</title>
+    <title>Speed Wash Laundromat</title>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -81,6 +81,7 @@
           paid: "",
           tip: "",
           status: "Pending",
+          pickupDateTime: null,
         });
 
         // State for all laundry records
@@ -149,7 +150,6 @@
           "Pending",
           "Washing",
           "Drying",
-          "Folding",
           "Done",
           "Picked Up",
         ];
@@ -303,8 +303,12 @@
         // FIREBASE: Save new or updated record
         // ============================================
         const handleSubmit = async () => {
-          if (!currentEntry.name || !currentEntry.employee) {
-            alert("Please fill in all required fields");
+          const missingFields = [];
+          if (!currentEntry.name) missingFields.push("Customer Name");
+          if (!currentEntry.employee) missingFields.push("Employee");
+
+          if (missingFields.length > 0) {
+            alert(`Please fill in the following required fields: ${missingFields.join(", ")}`);
             return;
           }
 
@@ -315,6 +319,7 @@
                 ? laundryRecords.find((r) => r.id === editingId)?.dateTime
                 : new Date().toLocaleString(),
               pickup: currentEntry.status === "Picked Up",
+              pickupDateTime: currentEntry.pickupDateTime || null,
             };
 
             if (editingId) {
@@ -351,6 +356,7 @@
               paid: "",
               tip: "",
               status: "Pending",
+              pickupDateTime: null,
             });
           } catch (err) {
             console.error("Error saving record:", err);
@@ -358,11 +364,223 @@
           }
         };
 
-        const sendSMSNotification = (phone, name) => {
-          // In a real application, this would connect to an SMS service like Twilio
-          alert(
-            `SMS sent to ${phone}: "Hello ${name}, your laundry is ready for pickup!"`
-          );
+        // ============================================
+        // PHONE NUMBER FORMATTING
+        // ============================================
+        const formatPhoneNumber = (phone) => {
+          if (!phone) return null;
+
+          // Remove all non-digit characters
+          const digitsOnly = phone.replace(/\D/g, '');
+
+          // Handle different input formats
+          if (digitsOnly.length === 10) {
+            // US number without country code: 4087878371 -> +14087878371
+            return '+1' + digitsOnly;
+          } else if (digitsOnly.length === 11 && digitsOnly.startsWith('1')) {
+            // US number with country code: 14087878371 -> +14087878371
+            return '+' + digitsOnly;
+          } else if (digitsOnly.length === 11) {
+            // Assume US if 11 digits: 14087878371 -> +14087878371
+            return '+' + digitsOnly;
+          } else if (phone.startsWith('+')) {
+            // Already formatted: +14087878371 -> +14087878371
+            return phone;
+          } else {
+            // Unknown format, try as-is with +1
+            return '+1' + digitsOnly;
+          }
+        };
+
+        const sendSMSNotification = async (phone, name) => {
+          try {
+            // Clean and format the phone number
+            const formattedPhone = formatPhoneNumber(phone);
+
+            if (!formattedPhone) {
+              alert('Invalid phone number format');
+              return;
+            }
+
+            const message = `Hello! Your laundry is ready for pickup at Speed Wash Laundromat. Thank you for choosing our service!`;
+
+            console.log(`Sending SMS to: ${formattedPhone} (original: ${phone})`);
+
+            const response = await fetch('/api/send-sms', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                phone: formattedPhone,
+                name: name,
+                message: message
+              })
+            });
+
+            const result = await response.json();
+
+            if (result.success) {
+              alert(`SMS sent successfully to ${formattedPhone}!`);
+            } else {
+              console.error('SMS error:', result);
+              alert(`Failed to send SMS: ${result.error}`);
+            }
+          } catch (error) {
+            console.error('SMS function error:', error);
+            alert('Failed to send SMS. Please check console for details.');
+          }
+        };
+
+        // ============================================
+        // STATUS BUTTON HANDLERS
+        // ============================================
+        const handleStartWash = async () => {
+          const missingFields = [];
+          if (!currentEntry.name) missingFields.push("Customer Name");
+          if (!currentEntry.employee) missingFields.push("Employee");
+
+          if (missingFields.length > 0) {
+            alert(`Please fill in the following required fields: ${missingFields.join(", ")}`);
+            return;
+          }
+
+          try {
+            const recordData = {
+              ...currentEntry,
+              status: "Washing",
+              dateTime: editingId
+                ? laundryRecords.find((r) => r.id === editingId)?.dateTime
+                : new Date().toLocaleString(),
+              pickup: false,
+              pickupDateTime: null,
+            };
+
+            if (editingId) {
+              await database.ref(`laundryRecords/${editingId}`).set(recordData);
+            } else {
+              const newRecordRef = database.ref("laundryRecords").push();
+              await newRecordRef.set(recordData);
+            }
+
+            alert("Record updated successfully!");
+            setEditingId(null);
+            setCurrentEntry({
+              employee: "",
+              name: "",
+              telephone: "",
+              weight: "",
+              comments: "",
+              washersUsed: [],
+              dryersUsed: [],
+              price: 0,
+              paid: "",
+              tip: "",
+              status: "Pending",
+              pickupDateTime: null,
+            });
+          } catch (err) {
+            console.error("Error saving record:", err);
+            alert("Failed to save record. Please try again.");
+          }
+        };
+
+        const handleStartDry = async () => {
+          const missingFields = [];
+          if (!currentEntry.name) missingFields.push("Customer Name");
+          if (!currentEntry.employee) missingFields.push("Employee");
+
+          if (missingFields.length > 0) {
+            alert(`Please fill in the following required fields: ${missingFields.join(", ")}`);
+            return;
+          }
+
+          try {
+            const recordData = {
+              ...currentEntry,
+              status: "Drying",
+              dateTime: editingId
+                ? laundryRecords.find((r) => r.id === editingId)?.dateTime
+                : new Date().toLocaleString(),
+              pickup: false,
+              pickupDateTime: null,
+            };
+
+            if (editingId) {
+              await database.ref(`laundryRecords/${editingId}`).set(recordData);
+            } else {
+              const newRecordRef = database.ref("laundryRecords").push();
+              await newRecordRef.set(recordData);
+            }
+
+            alert("Record updated successfully!");
+            setEditingId(null);
+            setCurrentEntry({
+              employee: "",
+              name: "",
+              telephone: "",
+              weight: "",
+              comments: "",
+              washersUsed: [],
+              dryersUsed: [],
+              price: 0,
+              paid: "",
+              tip: "",
+              status: "Pending",
+              pickupDateTime: null,
+            });
+          } catch (err) {
+            console.error("Error saving record:", err);
+            alert("Failed to save record. Please try again.");
+          }
+        };
+
+        const handleDoneNotify = async () => {
+          const missingFields = [];
+          if (!currentEntry.name) missingFields.push("Customer Name");
+          if (!currentEntry.employee) missingFields.push("Employee");
+
+          if (missingFields.length > 0) {
+            alert(`Please fill in the following required fields: ${missingFields.join(", ")}`);
+            return;
+          }
+
+          try {
+            const recordData = {
+              ...currentEntry,
+              status: "Done",
+              dateTime: laundryRecords.find((r) => r.id === editingId)?.dateTime,
+              pickup: false,
+              pickupDateTime: null,
+            };
+
+            await database.ref(`laundryRecords/${editingId}`).set(recordData);
+
+            // Send SMS notification
+            if (currentEntry.telephone) {
+              sendSMSNotification(currentEntry.telephone, currentEntry.name);
+            }
+
+            alert("Record updated successfully!");
+            setEditingId(null);
+            setCurrentEntry({
+              employee: "",
+              name: "",
+              telephone: "",
+              weight: "",
+              comments: "",
+              washersUsed: [],
+              dryersUsed: [],
+              price: 0,
+              paid: "",
+              tip: "",
+              status: "Pending",
+              pickupDateTime: null,
+            });
+          } catch (err) {
+            console.error("Error saving record:", err);
+            alert("Failed to save record. Please try again.");
+          }
         };
 
         const handleEdit = (record) => {
@@ -392,6 +610,56 @@
               console.error("Error deleting record:", err);
               alert("Failed to delete record. Please try again.");
             }
+          }
+        };
+
+        // ============================================
+        // FIREBASE: Update record status
+        // ============================================
+        const handleStatusUpdate = async (recordId, newStatus, currentRecord) => {
+          if (!recordId) {
+            console.error("No record ID provided");
+            alert("Error: No record ID found. Please refresh the page and try again.");
+            return;
+          }
+
+          try {
+            // Create a clean record object without Firebase-specific fields
+            const cleanRecord = {
+              employee: currentRecord.employee || "",
+              name: currentRecord.name || "",
+              telephone: currentRecord.telephone || "",
+              weight: currentRecord.weight || "",
+              comments: currentRecord.comments || "",
+              washersUsed: currentRecord.washersUsed || [],
+              dryersUsed: currentRecord.dryersUsed || [],
+              price: currentRecord.price || 0,
+              paid: currentRecord.paid || "",
+              tip: currentRecord.tip || "",
+              dateTime: currentRecord.dateTime || new Date().toLocaleString(),
+              status: newStatus,
+              pickup: newStatus === "Picked Up",
+              pickupDateTime: newStatus === "Picked Up" && currentRecord.status !== "Picked Up"
+                ? new Date().toLocaleString()
+                : currentRecord.pickupDateTime || null,
+            };
+
+            console.log("Updating record:", recordId, "with data:", cleanRecord);
+
+            // Use update instead of set to be safer
+            await database.ref(`laundryRecords/${recordId}`).update(cleanRecord);
+
+            console.log("Status updated successfully");
+
+            // Send SMS notification if status is "Done"
+            if (newStatus === "Done" && currentRecord.telephone) {
+              sendSMSNotification(currentRecord.telephone, currentRecord.name);
+            }
+          } catch (err) {
+            console.error("Error updating status:", err);
+            console.error("Record ID:", recordId);
+            console.error("New status:", newStatus);
+            alert(`Failed to update status: ${err.message || 'Unknown error'}`);
           }
         };
 
@@ -497,9 +765,8 @@
               "Pending": 0,
               "Washing": 1,
               "Drying": 2,
-              "Folding": 3,
-              "Done": 4,
-              "Picked Up": 5
+              "Done": 3,
+              "Picked Up": 4
             };
 
             // If status sorting is active, sort by status first
@@ -508,12 +775,12 @@
               const statusB = statusOrder[b.status] !== undefined ? statusOrder[b.status] : 999;
 
               if (statusSortOrder === "asc") {
-                // Pending -> Washing -> Drying -> Folding -> Done -> Picked Up
+                // Pending -> Washing -> Drying -> Done -> Picked Up
                 if (statusA !== statusB) {
                   return statusA - statusB;
                 }
               } else { // desc
-                // Picked Up -> Done -> Folding -> Drying -> Washing -> Pending
+                // Picked Up -> Done -> Drying -> Washing -> Pending
                 if (statusA !== statusB) {
                   return statusB - statusA;
                 }
@@ -549,7 +816,7 @@
             "Paid",
             "Tip",
             "Status",
-            "Pickup",
+            "Pickup Date/Time",
           ];
           const csvData = filteredRecords.map((record) => [
             record.dateTime,
@@ -563,7 +830,7 @@
             `$${record.paid || 0}`,
             `$${record.tip || 0}`,
             record.status,
-            record.pickup ? "Yes" : "No",
+            record.pickupDateTime || "-",
           ]);
 
           const csvContent = [headers, ...csvData]
@@ -1173,9 +1440,9 @@
 
         return (
           <div className="min-h-screen bg-gray-100 p-4">
-            <div className="max-w-6xl mx-auto">
+            <div className="max-w-screen-xl mx-auto">
               <h1 className="text-3xl font-bold text-center mb-6 text-gray-800">
-                Laundry Management System
+                Speed Wash Laundromat
               </h1>
 
               {/* Tab Navigation */}
@@ -1370,7 +1637,7 @@
                           onClick={() => handleWasherToggle(washer)}
                           className={`h-8 w-10 rounded border text-xs font-medium transition-colors ${
                             currentEntry.washersUsed.includes(washer)
-                              ? "bg-blue-500 text-white border-blue-500"
+                              ? "bg-blue-300 text-blue-800 border-blue-300"
                               : "bg-white text-gray-700 border-gray-300 hover:border-gray-400"
                           }`}
                         >
@@ -1387,6 +1654,16 @@
                         .map((w) => `#${w} = $${editablePrices[w]}`)
                         .join(", ")}
                     </div>
+                    {!editingId && (
+                      <div className="mt-3">
+                        <button
+                          onClick={handleStartWash}
+                          className="bg-blue-300 hover:bg-blue-400 text-blue-800 px-4 py-2 rounded-md font-medium transition-colors"
+                        >
+                          Start Wash
+                        </button>
+                      </div>
+                    )}
                   </div>
 
                   {/* Dryers Used */}
@@ -1402,7 +1679,7 @@
                           onClick={() => handleDryerToggle(dryer)}
                           className={`h-8 w-10 rounded border text-xs font-medium transition-colors ${
                             currentEntry.dryersUsed.includes(dryer)
-                              ? "bg-green-500 text-white border-green-500"
+                              ? "bg-green-300 text-green-800 border-green-300"
                               : "bg-white text-gray-700 border-gray-300 hover:border-gray-400"
                           }`}
                         >
@@ -1414,7 +1691,18 @@
                       Selected dryers:{" "}
                       {formatWashers(currentEntry.dryersUsed) || "None"}
                     </div>
+                    {!editingId && (
+                      <div className="mt-3">
+                        <button
+                          onClick={handleStartDry}
+                          className="bg-green-300 hover:bg-green-400 text-green-800 px-4 py-2 rounded-md font-medium transition-colors"
+                        >
+                          Start Dry
+                        </button>
+                      </div>
+                    )}
                   </div>
+
 
                   {/* Price, Paid, Tip */}
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
@@ -1466,64 +1754,51 @@
                     </div>
                   </div>
 
-                  {/* Status */}
-                  <div className="mb-6">
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Status
-                    </label>
-                    <div className="flex gap-4 flex-wrap">
-                      {statuses.map((status) => (
-                        <label key={status} className="flex items-center">
-                          <input
-                            type="radio"
-                            name="status"
-                            value={status}
-                            checked={currentEntry.status === status}
-                            onChange={(e) =>
-                              setCurrentEntry((prev) => ({
-                                ...prev,
-                                status: e.target.value,
-                              }))
-                            }
-                            className="mr-2"
-                          />
-                          <span className="text-sm">{status}</span>
-                        </label>
-                      ))}
-                    </div>
-                  </div>
 
                   {/* Submit Button */}
-                  <div className="flex gap-4">
-                    <button
-                      onClick={handleSubmit}
-                      className="bg-blue-500 hover:bg-blue-600 text-white px-6 py-2 rounded-md font-medium transition-colors"
-                    >
-                      {editingId ? "Update Entry" : "Save Entry"}
-                    </button>
+                  <div className="space-y-4">
                     {editingId && (
-                      <button
-                        onClick={() => {
-                          setEditingId(null);
-                          setCurrentEntry({
-                            employee: "",
-                            name: "",
-                            telephone: "",
-                            weight: "",
-                            comments: "",
-                            washersUsed: [],
-                            dryersUsed: [],
-                            price: 0,
-                            paid: "",
-                            tip: "",
-                            status: "Pending",
-                          });
-                        }}
-                        className="bg-gray-500 hover:bg-gray-600 text-white px-6 py-2 rounded-md font-medium transition-colors"
-                      >
-                        Cancel Edit
-                      </button>
+                      <div className="flex gap-4">
+                        <button
+                          onClick={handleDoneNotify}
+                          className="bg-green-500 hover:bg-green-600 text-white px-6 py-2 rounded-md font-medium transition-colors"
+                        >
+                          Done - Notify Customer
+                        </button>
+                      </div>
                     )}
+                    <div className="flex gap-4">
+                      <button
+                        onClick={handleSubmit}
+                        className="bg-blue-500 hover:bg-blue-600 text-white px-6 py-2 rounded-md font-medium transition-colors"
+                      >
+                        {editingId ? "Update Entry" : "Save Entry"}
+                      </button>
+                      {editingId && (
+                        <button
+                          onClick={() => {
+                            setEditingId(null);
+                            setCurrentEntry({
+                              employee: "",
+                              name: "",
+                              telephone: "",
+                              weight: "",
+                              comments: "",
+                              washersUsed: [],
+                              dryersUsed: [],
+                              price: 0,
+                              paid: "",
+                              tip: "",
+                              status: "Pending",
+                              pickupDateTime: null,
+                            });
+                          }}
+                          className="bg-gray-500 hover:bg-gray-600 text-white px-6 py-2 rounded-md font-medium transition-colors"
+                        >
+                          Cancel Edit
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
               )}
@@ -1614,7 +1889,7 @@
                           <th className="border border-gray-300 p-2 text-left">
                             Comments
                           </th>
-                          <th className="border border-gray-300 p-2 text-left">
+                          <th className="border border-gray-300 p-2 text-left w-24">
                             Machine
                           </th>
                           <th className="border border-gray-300 p-2 text-left">
@@ -1627,7 +1902,7 @@
                             Tip
                           </th>
                           <th
-                            className="border border-gray-300 p-2 text-left cursor-pointer hover:bg-gray-700 transition-colors select-none"
+                            className="border border-gray-300 p-2 text-left cursor-pointer hover:bg-gray-700 transition-colors select-none w-32"
                             onClick={() => {
                               if (statusSortOrder === "none") {
                                 setStatusSortOrder("asc");
@@ -1647,7 +1922,7 @@
                             </div>
                           </th>
                           <th className="border border-gray-300 p-2 text-left">
-                            Pickup?
+                            Pickup Date/Time
                           </th>
                           <th className="border border-gray-300 p-2 text-left">
                             Actions
@@ -1680,7 +1955,7 @@
                             <td className="border border-gray-300 p-2 text-sm">
                               {record.comments || ""}
                             </td>
-                            <td className="border border-gray-300 p-2 text-sm">
+                            <td className="border border-gray-300 p-2 text-sm w-24">
                               {formatMachines(
                                 record.washersUsed || [],
                                 record.dryersUsed || []
@@ -1695,9 +1970,11 @@
                             <td className="border border-gray-300 p-2">
                               ${record.tip || 0}
                             </td>
-                            <td className="border border-gray-300 p-2">
-                              <span
-                                className={`px-2 py-1 rounded-full text-xs font-medium ${
+                            <td className="border border-gray-300 p-2 w-32">
+                              <select
+                                value={record.status}
+                                onChange={(e) => handleStatusUpdate(record.id, e.target.value, record)}
+                                className={`px-2 py-1 rounded text-xs font-medium border-none outline-none cursor-pointer w-full ${
                                   record.status === "Done"
                                     ? "bg-green-100 text-green-800"
                                     : record.status === "Picked Up"
@@ -1705,11 +1982,15 @@
                                     : "bg-yellow-100 text-yellow-800"
                                 }`}
                               >
-                                {record.status}
-                              </span>
+                                {statuses.map((status) => (
+                                  <option key={status} value={status}>
+                                    {status}
+                                  </option>
+                                ))}
+                              </select>
                             </td>
                             <td className="border border-gray-300 p-2 text-center">
-                              {record.pickup ? "✓" : "✗"}
+                              {record.pickupDateTime || "-"}
                             </td>
                             <td className="border border-gray-300 p-2">
                               <div className="flex gap-1">
